@@ -1,0 +1,541 @@
+                                             
+new ; 
+chdir H:\Desktop\GAUSS\;
+output file=logs\step2.out reset ;
+
+//=========================//
+
+tstart=date;
+
+n=27163;
+nalt=135;
+n_inter = 90;
+
+
+/************/
+/*DATA INPUT*/
+/************/
+
+load data[n,67] =  H:\Desktop\GAUSS\GAUSS_DB_rand.csv;    // WoON 2012 database
+load altc[nalt,54] = H:\Desktop\GAUSS\GAUSS_gem_DB_rand.csv; // alternative characteristics 
+load asc[nalt,1]= H:\Desktop\GAUSS\logs\ASCs_pxn.out ;	// ASC's from step 1
+load coefs[n_inter,3] = H:\Desktop\GAUSS\logs\coefs_pxn.out;// coefficients from step 1
+load spatWcont[nalt,nalt] = H:\Desktop\GAUSS\GAUSS_Rand_W_cont_matrix.csv; // spatial matrix - countiguity
+load spatWcontuns[nalt,nalt] = H:\Desktop\GAUSS\GAUSS_W_contunstandardized_matrix.csv; // spatial matrix - countiguity (Unstandardized)
+load spatWidist[nalt,nalt] = H:\Desktop\GAUSS\GAUSS_Rand_W_idist_matrix.csv; // spatial matrix - inverse distance
+
+co = coefs[1:n_inter,1];
+
+
+/***********/
+/*VARIABLES*/
+/***********/
+
+screen on;
+
+	weights = 	data[1:n,1];
+	alt_hh = 	data[1:n,64];
+	hh_size = 	data[1:n,3];
+	age = 		data[1:n,4];
+	num_kids = 	data[1:n,5];
+	lnincome = 	ln(data[1:n,6]);
+	mig = 		data[1:n,7];
+	skill = 	data[1:n,8];
+	nativeskill = 	data[1:n,9];
+	migLskill = 	data[1:n,10];
+	migskill = 	data[1:n,11];
+	hh_kids  = 	data[1:n,12];
+	hh_earners  = 	data[1:n,13];
+
+hh_choice = zeros(nalt,n);
+i=1; do while i<=n;
+	hh_choice[alt_hh[i],i]=1;
+i=i+1;endo;
+
+
+hh = age~hh_kids~lnincome~nativeskill~migLskill~migskill; // Define househo;d characteristics
+
+	p_all = 		altc[1:nalt,1];
+	banen = 		altc[1:nalt,3];
+	rmon  = 		altc[1:nalt,4];
+	ic = 			altc[1:nalt,5];
+	acc_gem = 		altc[1:nalt,6];
+	lngem_woz= 		ln(altc[1:nalt,7]);
+	nature = 		altc[1:nalt,10];
+	water = 		altc[1:nalt,11];
+	price = 		ln(altc[1:nalt,13]);
+	LQJ   = 		altc[1:nalt,34];
+	LQP   = 		altc[1:nalt,40];
+	LQR   = 		altc[1:nalt,42];
+	supermarket = 	altc[1:nalt,49];
+	restaurants = 	altc[1:nalt,47];
+	cine  = 		altc[1:nalt,9];
+	afst_train = 	altc[1:nalt,50];
+	shrs = 			altc[1:nalt,52];
+
+p_all_2 = p_all.*p_all;
+
+
+// Define alternative characteristics (price~p_all~p_all_2~ + more vars)
+// --------------------------------------------------------------------
+z1=afst_train;
+z2=banen;
+z3=rmon;
+z4=nature;
+z5=LQJ;
+
+altcar = price~p_all~p_all_2~z1~z2~z3~z4~z5; // add here if necessary
+	px_altcar = spatWidist*altcar;
+px_altcar = px_altcar[.,2:cols(px_altcar)];
+
+// Generate shares of regions
+if shrs == 0;
+	shrs = 0.00001;
+endif;
+//print shrs;
+
+// test shares/weights
+sum_weights = sumc(weights);
+sum_w_alt = zeros(nalt,1);
+
+i=1;
+	do while i<=n;
+		sum_w_alt[alt_hh[i,1],1]= sum_w_alt[alt_hh[i,1],1] + weights[i,1] ; 
+		i=i+1;
+	endo;
+
+	sum_w_alt = sum_w_alt/sum_weights;
+	sum_w_alt;
+	shrs=sum_w_alt;
+
+weights = n*weights/sumc(weights);
+
+
+// create mean hh characteristics
+mean_hh = (meanc(hh))';
+dev_mean_hh = hh-mean_hh;
+show hh dev_mean_hh;	 
+	print hh[10000,.];
+	mean_hh[1,.];
+	dev_mean_hh[10000,.]; // matrix of deviations from the mean hh characteristics
+
+clear data; clear altc;
+
+/*****************************/
+/* Computing the instruments */
+/*****************************/
+U = zeros(n,nalt);
+sum_expU = zeros(n,1);
+p = zeros(n,nalt);
+sum_p = zeros(nalt,1);
+min_difm = ones(1,1)*20;
+min_ita = ones(1,1)*1000;
+
+// OLS 
+//====
+{ vnam,m,b,stb,vc,stderr,sigma,cx,rsq,resid,dwstat } = ols(0,asc,altcar~px_altcar); 
+
+/*
+b =inv(altcar'altcar)*altcar'*asc;
+u = asc-altcar*b;
+newvare=(u'*u)/(nalt-cols(altcar));
+	newvarb=newvare*(inv(altcar'*altcar*(inv(altcar'*altcar))*altcar'*altcar));
+	newse = diag(sqrt(newvarb));
+	newtval=b./newse ;*/
+
+oldprice = price;
+oldpall = p_all;
+oldpall2 = p_all_2;
+stepsize = {1 1}; // {0.25 0.5}
+itc_ind = 10;
+
+itc=1; do until abs(itc_ind)<1;
+b;
+	difm=1 ; min_difm = ones(1,1)*20; min_ita = ones(1,1)*1000;
+	ita=1 ;	do until difm<0.0005;
+		//print "start ita" ita ;
+
+				altcar = price~p_all~p_all_2~z1~z2~z3~z4~z5; // add here if necessary
+					px_altcar = spatWidist*altcar;
+				px_altcar = px_altcar[.,2:cols(px_altcar)];
+				
+				altcar = altcar~px_altcar; // add here if necessary
+				clear xvars; xvars=zeros(n_inter,n);
+				i=1; do while i<=n;
+						h=1 ; do until h>nalt; // generate the sum of utilities of individual i=1..n from all alternatives h=1..H:
+							x = altcar[h,.].*(dev_mean_hh[i,.])';
+							x = x[.,1]|x[.,2]|x[.,3]|x[.,4]|x[.,5]|x[.,6]|x[.,7]|x[.,8]|x[.,9]|x[.,10]|x[.,11]|x[.,12]|x[.,13]|x[.,14]|x[.,15]; // Change according to the number of explanatory variables (==cols(altcar))
+							xvars[.,i]=x[.,1];
+						h=h+1;	endo;
+				i=i+1; endo;
+
+				a = (xvars'*co)*ones(1,nalt);
+				U = ((altcar*(b[2:(cols(altcar)+1)])*ones(1,n))' + a);
+				sum_expU = sumc(exp(U[1:n,.]'));
+				
+				p = weights.*(exp(U)./sum_expU);
+				sum_p = sumc(p[.,1:nalt]);
+
+				sum_p = sum_p/n;
+				d_shrs = sum_p-shrs; 			// the difference between the calculated shares between each of the iterations;
+				difa = sqrt((d_shrs'*d_shrs)/nalt) ; 	// values should converge;
+				difm = sqrt(maxc(d_shrs.*d_shrs)) ; 
+				// print "difm" difm ;
+				lndif = ln(sum_p)-ln(shrs);
+					
+				price[1:nalt,1]=price[1:nalt,1]+stepsize[1,1]*lndif ;  // adjust price instrument 
+				//price[1,1]=oldprice[1,1];
+				p_all[1:nalt,1]=p_all[1:nalt,1]+stepsize[1,2]*lndif ;  // adjust price instrument 
+				//p_all[1,1]=oldpall[1,1];
+				p_all_2 = p_all.*p_all;
+
+		print "difm" difm  " ita" ita "finished"; 
+				
+			if ita>1 and difm>min_difm-0.00001; difm=0;endif;
+			if difm<min_difm; min_difm=difm; min_ita=ita; best_price=price; best_p_all=p_all;  endif;
+			//if difm>min_difm and ita>min_ita; difm=0; endif;
+		
+		ita=ita+1; endo; 
+
+	iv_price = best_price; price = oldprice;
+	iv_p_mig = best_p_all; p_all = oldpall;
+	iv_p_mig_2 = iv_p_mig.*iv_p_mig ; p_all_2= oldpall2;
+
+	corrx(oldprice~iv_price); corrx(oldpall~iv_p_mig);
+	clear best_price, best_p_all;
+
+	// 2SLS
+	//======
+__output=0;
+	"first stage IV" ;
+	altcar2SLS = iv_price~iv_p_mig~iv_p_mig_2~altcar[.,4:cols(altcar)];
+		{ vnam,m,b1,stb,vc,stderr,sigma,cx,rsq,resid,dwstat } = ols(0,price,altcar2SLS);
+		price_hat=b1[1]+(altcar2SLS)*b1[2:(cols(altcar)+1),1] ;
+
+		{ vnam,m,b1,stb,vc,stderr,sigma,cx,rsq,resid,dwstat } = ols(0,p_all,altcar2SLS);
+		p_all_hat=b1[1]+(altcar2SLS)*b1[2:(cols(altcar)+1),1] ;
+
+		{ vnam,m,b1,stb,vc,stderr,sigma,cx,rsq,resid,dwstat } = ols(0,p_all_2,altcar2SLS);
+		p_all_2_hat=b1[1]+(altcar2SLS)*b1[2:(cols(altcar)+1),1] ;
+		
+	"IV reg" ;
+	altcar = price_hat~p_all_hat~p_all_2_hat~altcar[.,4:cols(altcar)];
+		{ vnam,m,b2,stb,vc,stderr,sigma,cx,rsq,resid,dwstat } = ols(0,asc,altcar);
+		ascc=b2[1] + altcar*b2[2:(cols(altcar)+1),1] ;
+__output=1; 
+stepsize = {0.05 0.05};
+itc_ind = sumc(b-b2);
+b=b2; "itc_ind" itc_ind; itc=itc+1; endo;
+
+output file = logs\2ndstep_rands_instruments.out;
+iv_price~iv_p_mig~iv_p_mig_2;
+output off;
+
+	/*
+	altcar = price_hat~p_all_hat~p_all_2_hat~altcar[.,4:cols(altcar)];
+	Z = altcar~px_altcar;
+	{ vnam,m,b2,stb,vc,stderr,sigma,cx,rsq,resid,dwstat } = ols(0,asc,z);
+	*/
+
+	// GMM/IV
+	//=======
+	/*
+		X = ones(71,1)~price~p_all~p_all_2~altcar[.,4:cols(altcar)];
+		inv(X'*X)*X'*asc;
+
+		H = ones(71,1)~altcar2sls;
+		Ph= H*inv(H'*H)*H';
+		Z = x;
+		Z_tild = Ph*Z;
+		inv(z_tild'*z)*z_tild'*asc~b2;
+	*/
+	" ";
+	//step 1a.
+	//--------
+	altcar = price~p_all~p_all_2~z1~z2~z3~z4~z5;
+	c = ones(nalt,1); I = eye(nalt);
+	X = price~p_all~p_all_2~altcar[.,4:cols(altcar)]~px_altcar~c;
+	{ vnam,m,bols,stb,vc,stderr,sigma,cx,rsq,resid,dwstat } = ols(0,asc,altcar~px_altcar);
+
+	M = spatWcont;
+	Mu = spatWcontuns;
+	Z = price~p_all~p_all_2~altcar[.,4:cols(altcar)]~px_altcar~c;
+		//b =inv(z'z)*z'*asc;
+	H = iv_price~iv_p_mig~iv_p_mig_2~altcar[.,4:cols(altcar)]~px_altcar;
+	H = H~m*H~c;
+	Ph= H*inv(H'*H)*H';
+	Z_tild = Ph*Z;
+	delta = inv(z_tild'*z)*z_tild'*asc;
+
+	b = (inv(x'*x))*x'*asc;
+		
+		e_cot = asc-z*delta;
+		vare1a=(e_cot'*e_cot)/(nalt-cols(z));
+		varb1a =vare1a*(inv(z'*z*(inv(z'*z))*z'*z));
+		se1a = diag(sqrt(varb1a));
+		tval1a=delta./se1a ;
+		delta~se1a~tval1a;
+
+
+ 
+// Moran's I 
+	e = asc - x*b;
+	MoransI = inv(e'e)*e'm*e; "Moran's I = " moransI  "";
+
+I = eye(nalt); m_proj = I-x*inv(x'x)*x';
+	EI = (sumc(diag(m_proj*m)))/(rows(x)-cols(x)); "EI	    	     " EI " " ;
+	vari = ((sumc(diag(m_proj*m*m_proj*m'))+sumc(diag((m_proj*m)*(m_proj*m)))+sumc(diag(m_proj*m))^2)/((rows(x)-cols(x))*(rows(x)-cols(x)+2))) - EI^2;
+	Zi = (moransI-EI)/sqrt(vari); "Zi	  	      " zi " " ;
+	pw=2*cdfnc(zi);"pw	  	     " pw " " ;
+	
+// LM test
+	e = asc - x*b; ssqr = e'*e/nalt; T = sumc(diag((m+m')*m)); I = eye(nalt);
+	m_proj = I-x*inv(x'x)*x';j= ((M*x*b)'*M_proj*(M*x*b) + T*ssqr)/(nalt*ssqr); " ";
+	lme = ((e'm*e/ssqr)^2)/T; "LMe        = " lme "<>= 3.841 (chi2(a=0.05)), chi2:"  cdfchic(lme,1);
+	lmr = (1/(nalt*j))*(e'M*asc/ssqr)^2; "LMr        = " lmr "<>= 3.841 (chi2(a=0.05)), chi2:"  cdfchic(lmr,1);
+	lme_robust = (inv(T-(T^2)*inv(nalt*J)))*((e'm*e/ssqr)-T*inv(nalt*J)*(e'm*asc/ssqr))^2; "lme_robust = " lme_robust "<>= 3.841 (chi2(a=0.05)), chi2:"  cdfchic(lme_robust,1);
+	lmr_robust = inv(nalt*J-T)*((e'm*asc/ssqr)-(e'm*e/ssqr))^2; "LMr_robust = " lmr_robust "<>= 3.841 (chi2(a=0.05)), chi2:"  cdfchic(lmr_robust,1); " ";
+
+
+// step 1b.
+//---------
+clear A1, A2, u_tild, u_tild_ups, gamma_tild;
+A1= M'*M- diag(M'*M); /////
+//A1 = inv(1+((1/n)*sumc(diag((M'*M))))^2)*(M'*M-(1/n)*sumc(diag(M'*M))*I);
+A2= M; /////
+u_tild= asc-Z*delta;
+u_tild_ups= M*u_tild;
+/*
+gc11 = (1/nalt)*u_tild'*(A1+A1')*u_tild_ups;
+gc12 = -(1/nalt)*u_tild_ups'*A1*u_tild_ups;
+gc21 = (1/nalt)*u_tild'*(A2+A2')*u_tild_ups;
+gc22 = -(1/nalt)*u_tild_ups'*A2*u_tild_ups;
+*/
+		gc11 = (1/nalt)*2*u_tild'*M'*A1*u_tild;
+		gc12 = -(1/nalt)*u_tild'*M'*A1*u_tild_ups;
+		gc21 = (1/nalt)*2*u_tild'*M'*A2*u_tild;
+		gc22 = -(1/nalt)*u_tild'*M'*A2*u_tild_ups;
+		gamma_C_tild = zeros(2,2);
+		gamma_C_tild[1,1] = gc11;
+		gamma_C_tild[1,2] = gc12;
+		gamma_C_tild[2,1] = gc21;
+		gamma_C_tild[2,2] = gc22;
+
+gamma_C_tild = ((gc11~gc12)|(gc21~gc22));
+
+g11 = (u_tild'*(A1)*u_tild);
+g21 = (u_tild'*(A2)*u_tild);
+gamma_tild =(1/nalt)*((g11|g21));
+
+clear gc11, gc12, gc21, gc22, g11, g21;
+
+rho=0; step=1;
+rho_mat = rho|rho^2;
+ita=1; do until ita>=10;
+	ea_rho = gradp(&rho_tild, rho);
+	hes_rho = hessp(&rho_tild,rho);
+	rho = rho -step*invpd(hes_rho)*ea_rho;			// Newton-Raphson method
+	"rho" rho "ea_rho" ea_rho "hes_rho" hes_rho;
+	//"argument is" (gamma_c_tild*rho_mat-gamma_tild)'*(gamma_c_tild*rho_mat-gamma_tild);
+ita=ita+1; endo;
+" ";
+
+
+// step 2a.
+//---------
+asc_cot		= (I - rho*M)*asc; // Cochrane-Orcutt transformation
+z_cot 		= (I - rho*M)*z; // Cochrane-Orcutt transformation
+z_cot_hat 	= ph*z_cot;
+delta_hat 	= inv(z_cot_hat'*z_cot)*z_cot_hat'*asc_cot;
+//(inv(z_cot_hat'*z_cot*(inv(z_cot'*z_cot))*z_cot'*z_cot_hat))*z_cot_hat'*z_cot*(inv(z_cot'*z_cot))*z_cot_hat'*asc_cot;
+(inv((ph*z)'*(z))*(ph*z)'*asc)~(inv(z_cot_hat'*z_cot)*z_cot_hat'*asc_cot);
+
+e_cot 		= asc_cot-z_cot*delta_hat; // Cochrane-Orcutt transformation
+
+	vare2a = (e_cot'e_cot)/(nalt-cols(z_cot));
+	varb2a = vare2a*(inv(z_cot'*z_cot_hat*(inv(z_cot_hat'*z_cot_hat))*z_cot_hat'*z_cot)) ;
+	se2a = sqrt(diag(varb2a));
+	tval2a = delta_hat./se2a;
+	delta_hat~se2a~tval2a;
+
+// step 2b.
+//---------
+//itb=1; do until itb==3;
+	z_cot 			= (I - rho*M)*z; // Cochrane-Orcutt transformation
+	error_2a 		= 	(I - rho*M)*(e_cot);
+	sigma_rho_hat	= 	diag(error_2a^2);
+//	sigma_rho_hat	= 	diagrv(eye(nalt),error_2a^2);
+	alfa1 			= 	-(1/nalt)*(z_cot'*(I - rho*M')*(A1+A1')*error_2a);
+	alfa2 			= 	-(1/nalt)*(z_cot'*(I - rho*M')*(A2+A2')*error_2a);
+	QHH 			= 	(1/nalt)*(H'*H);
+	QHZ 			= 	(1/nalt)*(H'*z_cot);
+//	QHZ_star		= 	(1/nalt)*(H'*z)- rho*(1/nalt)*H'*M*Z;
+	P_hat 			= 	(inv(QHH))*QHZ*(inv(QHZ'*(inv(QHH))*QHZ));
+//	P_hat 			= 	(inv(QHH))*QHZ_star*(inv(QHZ_star'*(inv(QHH))*QHZ_star));
+	T_hat 			= 	H*P_hat;
+
+	a_1 = T_hat*alfa1;
+	a_2 = T_hat*alfa2;
+
+psi11 = (1/(2*nalt))*sumc(diag((A1+A1')*sigma_rho_hat*(A1+A1')*sigma_rho_hat)) + (1/nalt)*(a_1'*sigma_rho_hat*a_1);
+psi12 = (1/(2*nalt))*sumc(diag((A1+A1')*sigma_rho_hat*(A2+A2')*sigma_rho_hat)) + (1/nalt)*(a_1'*sigma_rho_hat*a_2);
+psi21 = (1/(2*nalt))*sumc(diag((A2+A2')*sigma_rho_hat*(A1+A1')*sigma_rho_hat)) + (1/nalt)*(a_2'*sigma_rho_hat*a_1);
+psi22 = (1/(2*nalt))*sumc(diag((A2+A2')*sigma_rho_hat*(A2+A2')*sigma_rho_hat)) + (1/nalt)*(a_2'*sigma_rho_hat*a_2);
+psi_rr=zeros(2,2);
+psi_rr[1,1] = psi11;	psi_rr[1,2] = psi12;
+psi_rr[2,1] = psi21;	psi_rr[2,2] = psi22;
+
+//	if itb==1;
+	step=1;
+	rho_mat = rho|rho^2;
+	ita=1; do until ita>=10;
+		rho_mat = rho|rho^2;
+		ea_rho = gradp(&rho_tild_2, rho);
+		hes_rho = hessp(&rho_tild_2,rho);
+		rho = rho -step*invpd(hes_rho)*ea_rho;			// Newton-Raphson method
+		"rho" rho "ea_rho" ea_rho "hes_rho" hes_rho;
+		//"argument is" (gamma_c_tild*rho_mat-gamma_tild)'*(gamma_c_tild*rho_mat-gamma_tild);
+		ita=ita+1; 	endo;
+//	endif; " ";
+//"itb"  itb "P_hat" P_hat "psi_rr" psi_rr;
+// itb=itb+1;	endo;
+
+psi_dd = (1/nalt)*H'sigma_rho_hat*H;
+psi_dr = (1/nalt)*H'sigma_rho_hat*(a_1~a_2);
+J_hat = gamma_C_tild*(1|rho^2);
+
+omega_dd = p_hat'*psi_dd*p_hat;
+omega_rd = p_hat'*psi_dr*inv(psi_rr)*J_hat*inv(J_hat'*inv(psi_rr)*J_hat);
+omega_rr = inv(J_hat'*inv(psi_rr)*J_hat);
+
+// Final estimators
+/*
+	rho=0; step=1;
+	rho_mat = rho|rho^2;
+	ita=1; do until ita>=10;
+		//rho_mat = rho|rho^2;
+		ea_rho = gradp(&rho_tild_2, rho);
+		hes_rho = hessp(&rho_tild_2,rho);
+		rho = rho -step*invpd(hes_rho)*ea_rho;			// Newton-Raphson method
+		"rho" rho "ea_rho" ea_rho "hes_rho" hes_rho;
+		//"argument is" (gamma_c_tild*rho_mat-gamma_tild)'*(gamma_c_tild*rho_mat-gamma_tild);
+		ita=ita+1; 	endo; */
+
+asc_cot_2b		= (I - rho*M)*asc; // Cochrane-Orcutt transformation
+z_cot_2b 		= (I - rho*M)*z; // Cochrane-Orcutt transformation
+z_cot_hat_2b 	= ph*z_cot_2b;
+delta_hat_2b 	= inv(z_cot_hat_2b'*z_cot_2b)*z_cot_hat_2b'*asc_cot_2b;
+e_cot_2b = asc_cot_2b-z_cot_2b*delta_hat_2b;
+	
+	vare2b=(e_cot_2b'*e_cot_2b)/(nalt-cols(z_cot_2b));
+	varb2b=vare2b*(inv(z_cot_2b'*z_cot_hat_2b*(inv(z_cot_hat_2b'*z_cot_hat_2b))*z_cot_hat_2b'*z_cot_2b));
+	se2b = diag(sqrt(varb2b));
+	tval2b=delta_hat./se2b ;
+	delta_hat_2b~se2b~tval2b;
+	// delta~se1a~tval1a;
+	
+
+//
+
+
+output file=logs\2ndstep_rands_coefs_pxn.out reset ;
+"OLS"; bols~stderr;
+"2SLS"; delta~se1a; // delta~se1a~tval1a;
+"GMM/IV"; delta_hat_2b~se2b; // delta_hat_2b~se2b~tval2b;
+screen off;
+
+output file=logs\2ndstep_rands_betas.out reset ;
+delta;
+screen off;
+
+// MWTP 
+//=====
+screen on; 
+delta_hat_2b=delta;
+
+Nvars = (cols(X)-cols(px_altcar)-1)-3;
+Nvars_altcars = (cols(X)-1);
+Bcovars = delta_hat_2b[4:Nvars_altcars];
+Acovars = zeros((cols(X)-1),3);
+i=1; do until i>(cols(X)-1);
+	Acovars[i,1] = co[i*6-2];
+	Acovars[i,2] = co[i*6-1];
+	Acovars[i,3] = co[i*6];
+i=i+1; endo;
+	
+	AWTP = zeros(nalt,nvars); AWTP_pxn = zeros(nalt,nvars); MWTP_p_mig=zeros(11,nvars); MWTP_altcar=zeros(nvars,4); MWTP_altcar_pxn=zeros(nvars,4);
+	/*
+	AWTP[.,1] = -exp(price)*(Bcovars[1])/delta_hat_2b[1];
+	AWTP[.,2] = -exp(price)*(Bcovars[2])/delta_hat_2b[1];
+	AWTP[.,3] = -exp(price)*(Bcovars[3])/delta_hat_2b[1];
+	AWTP[.,4] = -exp(price)*(Bcovars[4])/delta_hat_2b[1];
+	AWTP[.,5] = -exp(price)*(Bcovars[5])/delta_hat_2b[1];
+	*/
+	
+	ite=1; do until ite>nvars;
+		AWTP[.,ite] = -exp(price)*(Bcovars[ite])/delta_hat_2b[1];
+		AWTP_pxn[.,ite] = -exp(price)*(Bcovars[ite+7])/delta_hat_2b[1];
+ 
+		// As actual values
+		MWTP_altcar[ite,1] = meanc(-exp(price))*(Bcovars[ite]	+Acovars[ite+3,1]*(-mean_hh[4])		+Acovars[ite+3,2]*(-mean_hh[5])		+Acovars[ite+3,3]*(-mean_hh[6]))/( delta_hat_2b[1] 	+ (-mean_hh[4])*Acovars[1,1]		+(-mean_hh[5])*Acovars[1,2]		+ (-mean_hh[6])*Acovars[1,3]);
+		MWTP_altcar[ite,2] = meanc(-exp(price))*(Bcovars[ite]	+Acovars[ite+3,1]*(1-mean_hh[4])	+Acovars[ite+3,2]*(-mean_hh[5])		+Acovars[ite+3,3]*(-mean_hh[6]))/( delta_hat_2b[1] 	+ (1-mean_hh[4])*Acovars[1,1]		+(-mean_hh[5])*Acovars[1,2]		+ (-mean_hh[6])*Acovars[1,3]);
+		MWTP_altcar[ite,3] = meanc(-exp(price))*(Bcovars[ite]	+Acovars[ite+3,1]*(-mean_hh[4])		+Acovars[ite+3,2]*(1-mean_hh[5])	+Acovars[ite+3,3]*(-mean_hh[6]))/( delta_hat_2b[1] 	+ (-mean_hh[4])*Acovars[1,1]		+(1-mean_hh[5])*Acovars[1,2]	+ (-mean_hh[6])*Acovars[1,3]);
+		MWTP_altcar[ite,4] = meanc(-exp(price))*(Bcovars[ite]	+Acovars[ite+3,1]*(-mean_hh[4])		+Acovars[ite+3,2]*(-mean_hh[5])		+Acovars[ite+3,3]*(1-mean_hh[6]))/( delta_hat_2b[1] + (-mean_hh[4])*Acovars[1,1]		+(-mean_hh[5])*Acovars[1,2]		+ (1-mean_hh[6])*Acovars[1,3]);
+/*
+		// As deviations from the mean
+		MWTP_altcar[ite,1] = meanc(-exp(price))*(Acovars[ite+3,1]*(-mean_hh[4])		+Acovars[ite+3,2]*(-mean_hh[5])		+Acovars[ite+3,3]*(-mean_hh[6]))/( delta_hat_2b[1] 	+ (-mean_hh[4])*Acovars[1,1]		+(-mean_hh[5])*Acovars[1,2]		+ (-mean_hh[6])*Acovars[1,3]);
+		MWTP_altcar[ite,2] = meanc(-exp(price))*(Acovars[ite+3,1]*(1-mean_hh[4])	+Acovars[ite+3,2]*(-mean_hh[5])		+Acovars[ite+3,3]*(-mean_hh[6]))/( delta_hat_2b[1] 	+ (1-mean_hh[4])*Acovars[1,1]		+(-mean_hh[5])*Acovars[1,2]		+ (-mean_hh[6])*Acovars[1,3]);
+		MWTP_altcar[ite,3] = meanc(-exp(price))*(Acovars[ite+3,1]*(-mean_hh[4])		+Acovars[ite+3,2]*(1-mean_hh[5])	+Acovars[ite+3,3]*(-mean_hh[6]))/( delta_hat_2b[1] 	+ (-mean_hh[4])*Acovars[1,1]		+(1-mean_hh[5])*Acovars[1,2]	+ (-mean_hh[6])*Acovars[1,3]);
+		MWTP_altcar[ite,4] = meanc(-exp(price))*(Acovars[ite+3,1]*(-mean_hh[4])		+Acovars[ite+3,2]*(-mean_hh[5])		+Acovars[ite+3,3]*(1-mean_hh[6]))/( delta_hat_2b[1] + (-mean_hh[4])*Acovars[1,1]		+(-mean_hh[5])*Acovars[1,2]		+ (1-mean_hh[6])*Acovars[1,3]);
+*/		
+		MWTP_altcar_pxn[ite,1] = meanc(-exp(price))*(Bcovars[ite+7]	+Acovars[ite+10,1]*(-mean_hh[4])		+Acovars[ite+10,2]*(-mean_hh[5])		+Acovars[ite+10,3]*(-mean_hh[6]))/( delta_hat_2b[1] 	+ (-mean_hh[4])*Acovars[1,1]		+(-mean_hh[5])*Acovars[1,2]		+ (-mean_hh[6])*Acovars[1,3]);
+		MWTP_altcar_pxn[ite,2] = meanc(-exp(price))*(Bcovars[ite+7]	+Acovars[ite+10,1]*(1-mean_hh[4])		+Acovars[ite+10,2]*(-mean_hh[5])		+Acovars[ite+10,3]*(-mean_hh[6]))/( delta_hat_2b[1] 	+ (1-mean_hh[4])*Acovars[1,1]		+(-mean_hh[5])*Acovars[1,2]		+ (-mean_hh[6])*Acovars[1,3]);
+		MWTP_altcar_pxn[ite,3] = meanc(-exp(price))*(Bcovars[ite+7]	+Acovars[ite+10,1]*(-mean_hh[4])		+Acovars[ite+10,2]*(1-mean_hh[5])		+Acovars[ite+10,3]*(-mean_hh[6]))/( delta_hat_2b[1] 	+ (-mean_hh[4])*Acovars[1,1]		+(1-mean_hh[5])*Acovars[1,2]	+ (-mean_hh[6])*Acovars[1,3]);
+		MWTP_altcar_pxn[ite,4] = meanc(-exp(price))*(Bcovars[ite+7]	+Acovars[ite+10,1]*(-mean_hh[4])		+Acovars[ite+10,2]*(-mean_hh[5])		+Acovars[ite+10,3]*(1-mean_hh[6]))/( delta_hat_2b[1] 	+ (-mean_hh[4])*Acovars[1,1]		+(-mean_hh[5])*Acovars[1,2]		+ (1-mean_hh[6])*Acovars[1,3]);
+ 		
+	ite=ite+1; endo;
+	AWTP = meanc(AWTP); AWTP_pxn = meanc(AWTP_pxn);
+	MWTP_altcar= AWTP~MWTP_altcar;
+	MWTP_altcar_pxn = AWTP_pxn~MWTP_altcar_pxn;
+	
+	p_all=0;ite=1;
+	do until p_all>50; 
+
+		// As actual values
+		MWTP_p_mig[ite,1] = meanc(-exp(price)).*(delta_hat_2b[2] + 2*delta_hat_2b[3]*p_all )/delta_hat_2b[1];
+		MWTP_p_mig[ite,2] = meanc(-exp(price)).*(delta_hat_2b[2] + 2*delta_hat_2b[3]*p_all + Acovars[2,1]*(-mean_hh[4]) 		+ 2*Acovars[3,1]*(-mean_hh[4])*p_all 		+ Acovars[2,2]*(-mean_hh[5]) 	+ 2*Acovars[3,2]*(-mean_hh[5])*p_all   	+ Acovars[2,3]*(-mean_hh[6]) 	+ 2*Acovars[3,3]*(-mean_hh[6])*p_all ) 	 / ( delta_hat_2b[1] + (-mean_hh[4])*Acovars[1,1]		+(-mean_hh[5])*Acovars[1,2] 	+ (-mean_hh[6])*Acovars[1,3]);
+		MWTP_p_mig[ite,3] = meanc(-exp(price)).*(delta_hat_2b[2] + 2*delta_hat_2b[3]*p_all + Acovars[2,1]*(1-mean_hh[4]) 		+ 2*Acovars[3,1]*(1-mean_hh[4])*p_all 		+ Acovars[2,2]*(-mean_hh[5]) 	+ 2*Acovars[3,2]*(-mean_hh[5])*p_all   	+ Acovars[2,3]*(-mean_hh[6])	+ 2*Acovars[3,3]*(-mean_hh[6])*p_all ) 	 / ( delta_hat_2b[1] + (1-mean_hh[4])*Acovars[1,1]		+(-mean_hh[5])*Acovars[1,2] 	+ (-mean_hh[6])*Acovars[1,3]);
+		MWTP_p_mig[ite,4] = meanc(-exp(price)).*(delta_hat_2b[2] + 2*delta_hat_2b[3]*p_all + Acovars[2,1]*(-mean_hh[4]) 		+ 2*Acovars[3,1]*(-mean_hh[4])*p_all 		+ Acovars[2,2]*(1-mean_hh[5]) 	+ 2*Acovars[3,2]*(1-mean_hh[5])*p_all  	+ Acovars[2,3]*(-mean_hh[6])	+ 2*Acovars[3,3]*(-mean_hh[6])*p_all ) 	 / ( delta_hat_2b[1] + (-mean_hh[4])*Acovars[1,1]		+(1-mean_hh[5])*Acovars[1,2] 	+ (-mean_hh[6])*Acovars[1,3]);
+		MWTP_p_mig[ite,5] = meanc(-exp(price)).*(delta_hat_2b[2] + 2*delta_hat_2b[3]*p_all + Acovars[2,1]*(-mean_hh[4]) 		+ 2*Acovars[3,1]*(-mean_hh[4])*p_all 		+ Acovars[2,2]*(-mean_hh[5]) 	+ 2*Acovars[3,2]*(-mean_hh[5])*p_all   	+ Acovars[2,3]*(1-mean_hh[6])	+ 2*Acovars[3,3]*(1-mean_hh[6])*p_all )  / ( delta_hat_2b[1] + (-mean_hh[4])*Acovars[1,1]		+(-mean_hh[5])*Acovars[1,2] 	+ (1-mean_hh[6])*Acovars[1,3]);
+/*
+		// As deviations from the mean
+		MWTP_p_mig[ite,1] = meanc(-exp(price)).*(delta_hat_2b[2] + 2*delta_hat_2b[3]*p_all )/delta_hat_2b[1];
+		MWTP_p_mig[ite,2] = meanc(-exp(price)).*(Acovars[2,1]*(-mean_hh[4]) 		+ 2*Acovars[3,1]*(-mean_hh[4])*p_all 		+ Acovars[2,2]*(-mean_hh[5]) 	+ 2*Acovars[3,2]*(-mean_hh[5])*p_all   	+ Acovars[2,3]*(-mean_hh[6]) 	+ 2*Acovars[3,3]*(-mean_hh[6])*p_all ) 	 / ( delta_hat_2b[1] + (-mean_hh[4])*Acovars[1,1]		+(-mean_hh[5])*Acovars[1,2] 	+ (-mean_hh[6])*Acovars[1,3]);
+		MWTP_p_mig[ite,3] = meanc(-exp(price)).*(Acovars[2,1]*(1-mean_hh[4]) 		+ 2*Acovars[3,1]*(1-mean_hh[4])*p_all 		+ Acovars[2,2]*(-mean_hh[5]) 	+ 2*Acovars[3,2]*(-mean_hh[5])*p_all   	+ Acovars[2,3]*(-mean_hh[6])	+ 2*Acovars[3,3]*(-mean_hh[6])*p_all ) 	 / ( delta_hat_2b[1] + (1-mean_hh[4])*Acovars[1,1]		+(-mean_hh[5])*Acovars[1,2] 	+ (-mean_hh[6])*Acovars[1,3]);
+		MWTP_p_mig[ite,4] = meanc(-exp(price)).*(Acovars[2,1]*(-mean_hh[4]) 		+ 2*Acovars[3,1]*(-mean_hh[4])*p_all 		+ Acovars[2,2]*(1-mean_hh[5]) 	+ 2*Acovars[3,2]*(1-mean_hh[5])*p_all  	+ Acovars[2,3]*(-mean_hh[6])	+ 2*Acovars[3,3]*(-mean_hh[6])*p_all ) 	 / ( delta_hat_2b[1] + (-mean_hh[4])*Acovars[1,1]		+(1-mean_hh[5])*Acovars[1,2] 	+ (-mean_hh[6])*Acovars[1,3]);
+		MWTP_p_mig[ite,5] = meanc(-exp(price)).*(Acovars[2,1]*(-mean_hh[4]) 		+ 2*Acovars[3,1]*(-mean_hh[4])*p_all 		+ Acovars[2,2]*(-mean_hh[5]) 	+ 2*Acovars[3,2]*(-mean_hh[5])*p_all   	+ Acovars[2,3]*(1-mean_hh[6])	+ 2*Acovars[3,3]*(1-mean_hh[6])*p_all )  / ( delta_hat_2b[1] + (-mean_hh[4])*Acovars[1,1]		+(-mean_hh[5])*Acovars[1,2] 	+ (1-mean_hh[6])*Acovars[1,3]);
+*/
+	p_all=P_all+5; ite=ite+1; endo;
+	p_all=oldpall;
+	
+
+output file=logs\2ndstep_rands_MWTP.out reset ;	
+	MWTP_p_mig;
+	MWTP_altcar;
+
+trun = ethsec(tstart,date)/6000;
+"Running time (min):  ";; trun;
+screen off;
+end ; 
+
+//// Procedures ////
+
+proc rho_tild(rho);
+	rho_mat = (rho)|(rho*rho);
+	retp((gamma_c_tild*rho_mat-gamma_tild)'*(gamma_c_tild*rho_mat-gamma_tild));
+endp;
+
+proc rho_tild_2(rho);
+	rho_mat = (rho)|(rho*rho);
+	retp((gamma_c_tild*rho_mat-gamma_tild)'*inv(psi_rr)*(gamma_c_tild*rho_mat-gamma_tild));
+endp;
