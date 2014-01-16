@@ -528,7 +528,7 @@ trun = ethsec(tstart,date)/6000;
 screen off;
 end ; 
 
-//// Procedures ////
+//// Procedures /////
 
 proc rho_tild(rho);
 	rho_mat = (rho)|(rho*rho);
