@@ -1,0 +1,296 @@
+
+/**************************/
+/*START FILE: CLEAN OUTPUT*/
+/**************************/
+chdir H:\Desktop\GAUSS\;
+output file=H:\Desktop\GAUSS\logs\asc1_pxn.out reset ;
+
+
+//=========================//
+
+tstart=date;
+
+
+n=27163;
+nalt=135;
+
+load data[n,67] =  H:\Desktop\GAUSS\GAUSS_DB_rand.csv; 
+load altc[nalt,54] = H:\Desktop\GAUSS\GAUSS_gem_DB_rand.csv;
+
+load spatWcont[nalt,nalt] = H:\Desktop\GAUSS\GAUSS_Rand_W_cont_matrix.csv; // spatial matrix - countiguity
+load spatWidist[nalt,nalt] = H:\Desktop\GAUSS\GAUSS_Rand_W_idist_matrix.csv; // spatial matrix - inverse distance
+
+//*********//
+// STEP 1 *//
+//*********//
+screen on;
+
+screen on;
+
+	weights = 	data[1:n,1];
+	alt_hh = 	data[1:n,64];
+	hh_size = 	data[1:n,3];
+	age = 		data[1:n,4];
+	num_kids = 	data[1:n,5];
+	lnincome = 	ln(data[1:n,6]);
+	mig = 		data[1:n,7];
+	skill = 	data[1:n,8];
+	nativeskill = 	data[1:n,9];
+	migLskill = 	data[1:n,10];
+	migskill = 	data[1:n,11];
+	hh_kids  = 	data[1:n,12];
+	hh_earners  = 	data[1:n,13];
+
+hh_choice = zeros(nalt,n);
+i=1; do while i<=n;
+	hh_choice[alt_hh[i],i]=1;
+i=i+1;endo;
+
+
+hh = age~hh_kids~lnincome~nativeskill~migLskill~migskill; // Define househo;d characteristics
+
+	p_all = 		altc[1:nalt,1];
+	banen = 		altc[1:nalt,3];
+	rmon  = 		altc[1:nalt,4];
+	ic = 			altc[1:nalt,5];
+	acc_gem = 		altc[1:nalt,6];
+	lngem_woz= 		ln(altc[1:nalt,7]);
+	nature = 		altc[1:nalt,10];
+	water = 		altc[1:nalt,11];
+	price = 		ln(altc[1:nalt,13]);
+	LQJ   = 		altc[1:nalt,34];
+	LQP   = 		altc[1:nalt,40];
+	LQR   = 		altc[1:nalt,42];
+	supermarket = 	altc[1:nalt,49];
+	restaurants = 	altc[1:nalt,47];
+	cine  = 		altc[1:nalt,9];
+	afst_train = 	altc[1:nalt,50];
+	shrs = 			altc[1:nalt,52];
+
+
+p_all_2 = p_all.*p_all;
+
+altcar_X = price~p_all~p_all_2~afst_train~banen~rmon~nature~LQJ; // Define (exogenous) alternative characteristics (8 vars)
+Waltcar = spatWidist*altcar_X; 
+px_altcar = Waltcar[.,2:cols(Waltcar)];
+	clear spatWidist;	
+
+altcar = altcar_X~px_altcar;
+	
+
+// Generate shares of regions
+if shrs == 0;
+	shrs = 0.00001;
+endif;
+//print shrs;
+
+clear data; clear altc;
+
+// test shares/weights
+sum_weights = sumc(weights);
+sum_w_alt = zeros(nalt,1);
+
+i=1;
+	do while i<=n;
+		sum_w_alt[alt_hh[i,1],1]= sum_w_alt[alt_hh[i,1],1] + weights[i,1] ; 
+		i=i+1;
+	endo;
+
+	sum_w_alt = sum_w_alt/sum_weights;
+	sum_w_alt;
+	shrs=sum_w_alt;
+
+//weights = n*weights/sumc(weights);
+weights = n*weights/sumc(weights);
+
+
+// create mean hh characteristics
+mean_hh = (meanc(hh))';
+dev_mean_hh = hh-mean_hh;
+show hh dev_mean_hh;	 
+	print hh[10000,.];
+	 mean_hh[1,.];
+	 dev_mean_hh[10000,.]; // matrix of deviations from the mean hh characteristics
+
+
+//============================//
+// asclogit model - 1st STEP  //
+//============================//
+
+n_inter = cols(altcar)*cols(dev_mean_hh); // Number of hh-alternative interaction variables
+
+asc = zeros(nalt,1);
+save logs\asc1.fmt = asc;
+
+load asc=logs\asc1.fmt ;
+
+	coefs = zeros(n_inter,4);
+	co = zeros(n_inter,1);
+	U = zeros(n,nalt);
+	sum_expU = zeros(n,1);
+	p = zeros(n,nalt);
+	sum_p = zeros(nalt,1);
+	min_difm = ones(1,1)*20;
+	min_ita = ones(1,1)*1000;
+	asc=ones(nalt,1);
+	asc[1,1]=0 ;
+
+xvars=zeros(n_inter,n);
+
+	i=1; do while i<=n;
+		h=1; do until h>nalt; 
+			x = altcar[h,.].*(dev_mean_hh[i,.])';
+			x = x[.,1]|x[.,2]|x[.,3]|x[.,4]|x[.,5]|x[.,6]|x[.,7]|x[.,8]|x[.,9]|x[.,10]|x[.,11]|x[.,12]|x[.,13]|x[.,14]|x[.,15]; // Change according to the number of explanatory variables (==cols(altcar))
+			xvars[.,i]=x[.,1];
+		h=h+1; endo;
+	i=i+1; endo;
+
+
+
+// BEGIN ITERATION 
+// ===============
+			
+itc=1 ; max_ea=100000000;
+do until max_ea<50 ;
+ita=1 ;
+
+// adjusting the asc's 
+//=====================
+print "start itc" itc "ita" ita ;
+
+	difa=1 ;
+	difm=1 ;
+	do until difm<0.0005 ; 
+		// print "start ita" ita ;
+
+		U = zeros(n,nalt);
+		p = zeros(n,nalt);
+		sum_p = zeros(nalt,1);
+		sum_expU = zeros(n,1);
+	/*
+			do while i<=n;
+				h=1 ; do until h>nalt; // generate the sum of utilities of individual i=1..n from all alternatives h=1..H:
+					x = altcar[h,.].*(dev_mean_hh[i,.])';
+					x = x[.,1]|x[.,2]|x[.,3]|x[.,4]|x[.,5]|x[.,6]|x[.,7]|x[.,8]|x[.,9]|x[.,10]|x[.,11]|x[.,12]|x[.,13]|x[.,14]; // Change according to the number of explanatory variables (==cols(altcar))
+					U[i,h] = asc[h] + x'*co  ;
+					sum_expU[i] = sum_expU[i] + exp(U[i,h]); // sum of utilities which individual i get from all alternative h=1...H
+				h=h+1;	endo;
+	*/
+		U = (asc*ones(1,n))' + (xvars'*co)*ones(1,nalt);
+		sum_expU = sumc(exp(U[1:n,.]'));
+		
+		
+		p = weights.*(exp(U)./sum_expU);
+		sum_p = sumc(p[.,1:nalt]);
+
+		sum_p = sum_p/n;
+		d_shrs = sum_p-shrs; 			// the difference between the calculated shares between each of the iterations;
+		difa = sqrt((d_shrs'*d_shrs)/nalt) ; 	// values should converge;
+		difm = sqrt(maxc(d_shrs.*d_shrs)) ; 
+		// print "difm" difm ;
+				
+		asc[1:nalt,1]=asc[1:nalt,1]+(ln(shrs[1:nalt,1]))-(ln(sum_p[1:nalt,1])) ;  // adjust ASC's 
+		asc[1,1]=0 ;
+	
+
+	if difm<min_difm; min_difm=difm; min_ita=ita; endif;
+	if difm>=min_difm and ita>min_ita; difm=0; endif;
+	
+
+	ita=ita+1;
+	//if ita<11 ; difm=1 ; endif ;
+	if ita>100 ; print "no convergence" ; difm=0 ; endif ;
+	
+	endo;
+
+ita=ita-1 ;
+print "finished ita after ita" ita ; "min_ita" min_ita " min_difm " min_difm ;
+min_difm = ones(1,1)*1; min_ita = ones(1,1)*1000;
+
+
+itb=1 ;
+step=0.25; // should be ~0.25
+do until itb>10 ;
+	//print "start itc" itc "itb" itb ;
+	
+	llitb=(ones(1,n)*maxll(co))' ;			// initial ll
+	eai=gradp(&maxll,co) ;  			// The Gradient dL/db (BHHH: equation 3.3) for each observation   (pt - qt)
+ 	ea=ones(1,n)*eai ;				// The Gradient dL/db matrix   (p - q)
+	ta=zeros(1,1) ;				
+
+	i=1 ;
+	do until i>n ;
+		ta=ta-eai[i,.]'*eai[i,.] ;	// RT, the variance-covariance matrix (BHHH: 3.7)
+	i=i+1 ;
+	endo ;
+
+	tai=-invpd(-ta) ; 				// inverse positive definite of (BHHH: 3.7)
+	se=sqrt(-diag(tai)) ;
+	co=co-step*tai*ea' ;				// b(i+1) = b(i) + (lambda)*RT(i)*(p(i)-q(i)) 
+	tvalues=co./se ;
+
+	print "ll" llitb ; maxc(ea'); 
+
+itb=itb+1 ; max_ea=maxc(ea');
+endo ;
+
+
+coefs = co~ea'~se~tvalues ;
+
+print "finished itc" itc;
+itc=itc+1 ;
+endo;
+
+//////////////////////////////////
+
+trun = ethsec(tstart,date)/6000;
+"Running time (min):  ";; trun;
+
+print asc;
+print coefs;
+
+//save logs\asc1.fmt = asc;
+//save logs\asc2.out = asc;
+output file=logs\coefs_pxn.out reset ;
+co~se~tvalues ;
+output file=logs\ASCs_pxn.out reset ;
+asc;
+
+screen off;
+
+end ; 
+
+//////////////////////////////////
+
+
+// Maximum likelihood procedure
+//=============================
+proc(1) = maxll(co);
+	local lla;
+	lla = zeros(n,1);
+	i=1;
+	U = zeros(n,nalt);
+	sum_expU = zeros(n,1);
+	sum_p = zeros(nalt,1);
+	p = zeros(n,nalt);
+	
+		do while i<=n;
+				h=1 ; do until h>nalt; // generate the sum of utilities of individual i=1..n from all alternatives h=1..H:
+					x = altcar[h,.].*(dev_mean_hh[i,.])';
+					x = x[.,1]|x[.,2]|x[.,3]|x[.,4]|x[.,5]|x[.,6]|x[.,7]|x[.,8]|x[.,9]|x[.,10]|x[.,11]|x[.,12]|x[.,13]|x[.,14]|x[.,15]; // Change according to the number of explanatory variables (==cols(altcar))
+					U[i,h] = asc[h] + x'*co  ;
+					sum_expU[i] = sum_expU[i] + exp(U[i,h]); // sum of utilities which individual i get from all alternative h=1...H
+				h=h+1;	endo;
+									
+				h=1;do until h>nalt; // Calculating the prob that i will choose alternative h:
+					p[i,h] = exp(U[i,h])/(sum_expU[i]); 	 
+					if p[i,h]<0.00000001; p[i,h]=0.00000001; endif;
+				h=h+1;	endo;
+				
+				lla[i] = weights[i]*ln( p[i,alt_hh[i,1]]); 
+
+			i=i+1;	endo;
+		
+	retp(lla);
+endp;
+
